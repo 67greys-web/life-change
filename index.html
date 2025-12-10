@@ -1,10 +1,309 @@
-<!DOCTYPE html>
-<html>
-  <head>
-    <title>Life Change</title>
-  </head>
-  <body>
-    <h1>Your Website is Live!</h1>
-    <p>If you see this, GitHub Pages is working.</p>
-  </body>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>LifeCoach — Custom Workouts & Meals</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- TensorFlow.js + MobileNet for food recognition -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.11.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.2.1/dist/mobilenet.min.js"></script>
+
+  <style>
+    :root{--accent:#2563eb;--bg:#f7fafc;--card:#fff}
+    body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; background:var(--bg); margin:0; padding:24px; color:#0f172a}
+    .container{max-width:980px;margin:0 auto}
+    .card{background:var(--card); padding:18px; border-radius:12px; box-shadow:0 6px 18px rgba(15,23,42,0.06); margin-bottom:18px}
+    h1{margin:0 0 8px; font-size:22px}
+    label{display:block; font-weight:600; margin-top:12px}
+    input[type="text"], select, textarea{width:100%; padding:10px; margin-top:6px; border-radius:8px; border:1px solid #e6edf3}
+    button{background:var(--accent); color:white; border:0; padding:10px 14px; border-radius:8px; cursor:pointer}
+    .row{display:flex; gap:12px; flex-wrap:wrap}
+    .col{flex:1; min-width:240px}
+    .small{font-size:13px; color:#475569}
+    img#foodPreview{max-width:260px; border-radius:10px; display:block; margin-top:8px}
+    .pred{font-size:14px; font-weight:600}
+    .muted{color:#64748b}
+    ul.clean{padding-left:16px}
+    .score-bar{height:12px; background:#e6edf3; border-radius:8px; overflow:hidden}
+    .score-fill{height:100%; background:linear-gradient(90deg,#10b981,#84cc16); width:0%}
+    pre{background:#0f172a;color:#dbeafe;padding:8px;border-radius:8px;overflow:auto}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>LifeCoach — daily workout & meal planner</h1>
+      <div class="small">Tell the app what you'd like to improve and it will generate a daily plan + let you rate your food by photo.</div>
+
+      <label for="goal">What do you want to be better at?</label>
+      <select id="goal">
+        <option value="general">General fitness & health</option>
+        <option value="strength">Build strength / muscle</option>
+        <option value="endurance">Endurance / cardio</option>
+        <option value="weight_loss">Lose weight / fat loss</option>
+        <option value="flexibility">Flexibility / mobility</option>
+        <option value="sport">Sport-specific (basketball, soccer...)</option>
+      </select>
+
+      <label for="time">Available daily time (minutes)</label>
+      <select id="time">
+        <option value="15">15</option>
+        <option value="30" selected>30</option>
+        <option value="45">45</option>
+        <option value="60">60</option>
+      </select>
+
+      <label for="diet">Diet preference (optional)</label>
+      <select id="diet">
+        <option value="omnivore">No preference / omnivore</option>
+        <option value="vegetarian">Vegetarian</option>
+        <option value="vegan">Vegan</option>
+        <option value="lowcarb">Low-carb</option>
+        <option value="highprotein">High-protein</option>
+      </select>
+
+      <label for="notes">Extra notes (injuries, equipment, age) — optional</label>
+      <input id="notes" placeholder="e.g. knee pain, have dumbbells" type="text" />
+
+      <div style="margin-top:12px" class="row">
+        <button id="makePlan">Generate today's plan</button>
+        <button id="randomize" style="background:#0ea5a4">Randomize suggestion</button>
+      </div>
+    </div>
+
+    <div id="planCard" class="card" style="display:none">
+      <h2>Today's Plan</h2>
+      <div id="workoutSection" class="col"></div>
+      <div id="mealsSection" class="col" style="margin-top:12px"></div>
+      <div style="margin-top:12px" class="small muted">This plan is algorithmically generated as guidance — adjust intensity & portion sizes to your needs.</div>
+    </div>
+
+    <div class="card">
+      <h2>Food photo health rating</h2>
+      <div class="small">Upload a photo and the site will identify the food (using MobileNet) and give a heuristic health score 1–10.</div>
+      <label>Upload food photo</label>
+      <input type="file" accept="image/*" id="foodFile" />
+      <img id="foodPreview" src="" alt="" style="display:none"/>
+      <div id="preds" style="margin-top:8px"></div>
+      <div style="margin-top:8px">
+        <div class="score-bar"><div id="scoreFill" class="score-fill"></div></div>
+        <div id="scoreText" style="margin-top:6px; font-weight:700"></div>
+      </div>
+      <div id="explain" class="small muted" style="margin-top:8px"></div>
+    </div>
+
+    <div class="card">
+      <h2>How to publish on GitHub Pages</h2>
+      <ol class="small">
+        <li>Create a new repo on GitHub (e.g. <code>life-coach</code>).</li>
+        <li>Upload this file as <code>index.html</code> in the repo root.</li>
+        <li>Go to Settings → Pages → choose branch <code>main</code> and root (/) → Save.</li>
+        <li>Your site will be live at <code>https://&lt;your-username&gt;.github.io/&lt;repo-name&gt;/</code></li>
+      </ol>
+    </div>
+  </div>
+
+<script>
+/* -------------------------
+   Planner logic (frontend)
+   ------------------------- */
+function pickWorkout(goal, minutes, notes){
+  // simple template-based generator
+  const base = [];
+  minutes = Number(minutes);
+  // Warmup
+  base.push({title:'Warm-up', items:['5 min brisk walk or jump rope', 'Dynamic stretches (leg swings, arm circles)']});
+  if(goal === 'strength'){
+    // circuit with dumbbells or bodyweight
+    const rounds = Math.max(1, Math.floor((minutes - 10) / 12));
+    base.push({title:`Strength circuit — ${rounds} round(s)`, items:[
+      `${rounds} rounds: 8-12 push-ups or incline push-ups`,
+      `${rounds} rounds: 8-12 dumbbell squats or bodyweight squats`,
+      `${rounds} rounds: 8-12 bent-over rows (dumbbell) or inverted rows`,
+      `${rounds} rounds: 10-15 glute bridges`
+    ]});
+    base.push({title:'Cooldown', items:['Stretch chest, hamstrings, quads — 5 min']});
+  } else if(goal === 'endurance'){
+    base.push({title:`Cardio block — ${minutes-5} minutes`, items:[
+      'Choose: steady run/bike/row OR intervals (30s sprint / 90s easy) repeated',
+      'If short time (<=30): do HIIT: 20s work / 10s rest x 10-15'
+    ]});
+  } else if(goal === 'weight_loss'){
+    base.push({title:`Mixed cardio + strength — ${minutes-10} minutes`, items:[
+      'Circuit: 45s work / 15s rest x 3 rounds: squats, mountain climbers, lunges, plank jacks',
+      'Keep heart rate elevated; finish with 5 min walk'
+    ]});
+  } else if(goal === 'flexibility'){
+    base.push({title:`Mobility & stretching — ${minutes} minutes`, items:[
+      'Full-body mobility flow: hip openers, thoracic rotations, hamstring stretches',
+      'Finish with 5–10 min deep stretching or yoga poses'
+    ]});
+  } else if(goal === 'sport'){
+    base.push({title:`Sport-specific training — ${minutes-10} minutes`, items:[
+      'Skill drills (dribbling/shooting for basketball, ball control for soccer) 20–30 min',
+      'Short conditioning: shuttle runs or agility ladder'
+    ]});
+  } else {
+    base.push({title:`Balanced session — ${minutes-10} minutes`, items:[
+      'Mix of cardio (15-20 min) + full-body strength (2–3 exercises, 3 sets)'
+    ]});
+  }
+  // simple modification for notes
+  if(notes && notes.toLowerCase().includes('knee')) base.push({title:'Notes', items:['Avoid deep lunges & heavy impact; prefer bike or pool cardio']});
+  return base;
+}
+
+function pickMeals(goal, diet){
+  // Produce breakfast, lunch, dinner, 1 snack
+  const meals = {breakfast:'', lunch:'', dinner:'', snack:''};
+  const omni = {
+    strength: {
+      breakfast:'Oatmeal with protein powder, banana, and almonds',
+      lunch:'Grilled chicken, quinoa, mixed greens, olive oil dressing',
+      dinner:'Salmon, sweet potato, steamed broccoli',
+      snack:'Greek yogurt + mixed nuts'
+    },
+    endurance: {
+      breakfast:'Whole-grain toast, peanut butter, banana, coffee',
+      lunch:'Rice bowl with chicken or tofu, veggies, avocado',
+      dinner:'Pasta with tomato sauce, lean protein, salad',
+      snack:'Fruit and energy bar'
+    },
+    weight_loss: {
+      breakfast:'Greek yogurt with berries and chia',
+      lunch:'Large salad with mixed greens, chickpeas, lean protein, vinaigrette',
+      dinner:'Stir-fry with lots of veggies and lean protein, small portion of rice',
+      snack:'Veggie sticks and hummus'
+    },
+    flexibility: {
+      breakfast:'Smoothie (spinach, banana, protein, almond milk)',
+      lunch:'Lentil soup with whole-grain bread',
+      dinner:'Grilled fish, steamed veggies, quinoa',
+      snack:'Apple and almond butter'
+    },
+    sport: {
+      breakfast:'Eggs, whole-grain toast, fruit',
+      lunch:'Chicken wrap with veggies and sweet potato',
+      dinner:'High-carb dinner if game-day: pasta + lean protein',
+      snack:'Protein shake + fruit'
+    },
+    general: {
+      breakfast:'Yogurt, oats, fruit',
+      lunch:'Turkey sandwich with salad',
+      dinner:'Chicken or tofu, vegetables, brown rice',
+      snack:'Nuts or fruit'
+    }
+  };
+  const chosen = omni[goal] || omni.general;
+  Object.assign(meals, chosen);
+  // Diet adjustments
+  if(diet === 'vegetarian'){
+    for(const k in meals) meals[k] = meals[k].replace(/chicken|turkey|salmon|fish|egg|lean protein/gi, 'tofu / legumes / eggs (if ok)');
+  }
+  if(diet === 'vegan'){
+    for(const k in meals) meals[k] = meals[k].replace(/egg|yogurt|cheese|milk|salmon|chicken|turkey|fish|Greek yogurt/gi, 'tofu / legumes / plant-based protein');
+  }
+  if(diet === 'lowcarb'){
+    for(const k in meals) meals[k] = meals[k].replace(/rice|pasta|quinoa|sweet potato|bread|oatmeal|toast/gi, 'extra veg / cauliflower rice');
+  }
+  if(diet === 'highprotein'){
+    for(const k in meals) meals[k] = meals[k] + ' + extra protein (chicken breast / protein shake)';
+  }
+  return meals;
+}
+
+/* -------------------------
+   UI: generate and show plan
+   ------------------------- */
+document.getElementById('makePlan').addEventListener('click', ()=>{
+  const goal = document.getElementById('goal').value;
+  const minutes = document.getElementById('time').value;
+  const diet = document.getElementById('diet').value;
+  const notes = document.getElementById('notes').value || '';
+  const workout = pickWorkout(goal, minutes, notes);
+  const meals = pickMeals(goal, diet);
+
+  // Render
+  const planCard = document.getElementById('planCard');
+  planCard.style.display = 'block';
+  const w = document.getElementById('workoutSection');
+  const m = document.getElementById('mealsSection');
+  w.innerHTML = '<h3>Workout</h3>';
+  workout.forEach(block=>{
+    const el = document.createElement('div');
+    el.innerHTML = `<strong>${block.title}</strong><ul class="clean">${block.items.map(it=>`<li>${it}</li>`).join('')}</ul>`;
+    w.appendChild(el);
+  });
+  m.innerHTML = '<h3>Meals</h3><ul class="clean">' +
+    `<li><strong>Breakfast</strong>: ${meals.breakfast}</li>` +
+    `<li><strong>Lunch</strong>: ${meals.lunch}</li>` +
+    `<li><strong>Dinner</strong>: ${meals.dinner}</li>` +
+    `<li><strong>Snack</strong>: ${meals.snack}</li>` +
+    '</ul>';
+});
+
+/* -------------------------
+   MobileNet food rating
+   ------------------------- */
+let mobilenetModel = null;
+const KEYWORD_SCORES = {
+  "salad":9,"spinach":10,"kale":10,"broccoli":10,"avocado":8,"apple":10,"banana":9,"orange":10,"berry":10,
+  "chicken":7,"grilled chicken":8,"fish":8,"salmon":9,"tuna":8,"egg":7,
+  "rice":5,"pasta":5,"bread":4,"sandwich":5,"pizza":3,"burger":3,
+  "fries":2,"fried":2,"donut":1,"ice cream":1,"cake":1,"cookie":1,"soda":1,"milkshake":2,"smoothie":6
+};
+
+async function loadMobileNet(){
+  try{
+    mobilenetModel = await mobilenet.load();
+    console.log('MobileNet loaded');
+  }catch(e){
+    console.warn('MobileNet failed to load', e);
+  }
+}
+loadMobileNet();
+
+document.getElementById('foodFile').addEventListener('change', async function(e){
+  const file = this.files[0];
+  if(!file) return;
+  const url = URL.createObjectURL(file);
+  const img = document.getElementById('foodPreview');
+  img.src = url;
+  img.style.display = 'block';
+
+  img.onload = async () => {
+    if(!mobilenetModel){
+      document.getElementById('preds').innerHTML = '<span class="muted">Model not loaded yet — try again in a sec</span>';
+      return;
+    }
+    const preds = await mobilenetModel.classify(img, 6);
+    document.getElementById('preds').innerHTML = preds.map(p => `<div class="pred">${p.className} — ${(p.probability*100).toFixed(1)}%</div>`).join('');
+    // compute heuristic score
+    const labels = preds.map(p => p.className.toLowerCase());
+    const hits = [];
+    for(const l of labels){
+      for(const kw in KEYWORD_SCORES){
+        if(l.includes(kw)) hits.push(KEYWORD_SCORES[kw]);
+      }
+    }
+    let score = hits.length ? hits.reduce((a,b)=>a+b,0)/hits.length : 5; // default 5
+    // clamp 1..10
+    score = Math.max(1, Math.min(10, Math.round(score*10)/10));
+    document.getElementById('scoreText').innerText = `${score} / 10`;
+    document.getElementById('scoreFill').style.width = (score*10) + '%';
+    // explanation
+    const found = preds.map(p=>p.className).slice(0,4).join(', ');
+    document.getElementById('explain').innerText = `Detected: ${found}. Heuristic score based on recognized items (fruits/veggies score higher; fried/sugary items score lower).`;
+  };
+});
+
+/* Randomize helper */
+document.getElementById('randomize').addEventListener('click', ()=>{
+  const goals = ['general','strength','endurance','weight_loss','flexibility','sport'];
+  document.getElementById('goal').value = goals[Math.floor(Math.random()*goals.length)];
+  const times = [15,30,45,60];
+  document.getElementById('time').value = times[Math.floor(Math.random()*times.length)];
+});
+</script>
+</body>
 </html>
